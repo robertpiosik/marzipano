@@ -17,21 +17,7 @@
 
 var StaticAsset = require('../assets/Static');
 var NetworkError = require('../NetworkError');
-var browser = require('bowser');
-var global = require('../util/global');
 var once = require('../util/once');
-
-// TODO: Move the load queue into the loader.
-
-// Whether to use createImageBitmap instead of a canvas for cropping.
-// See https://caniuse.com/?search=createimagebitmap
-var useCreateImageBitmap = !!global.createImageBitmap && !browser.firefox && !browser.safari;
-
-// Options for createImageBitmap.
-var createImageBitmapOpts = {
-  imageOrientation: 'flipY',
-  premultiplyAlpha: 'premultiply'
-};
 
 /**
  * @class HtmlImageLoader
@@ -43,7 +29,36 @@ var createImageBitmapOpts = {
  * @param {Stage} stage The stage which is going to request images to be loaded.
  */
 function HtmlImageLoader(stage) {
+  if (stage.type !== 'webgl' && stage.type !== 'css') {
+    throw new Error('Stage type incompatible with loader');
+  }
   this._stage = stage;
+
+  const self = this;
+
+  this._useWorkers = false;
+
+  // This variable will have the response callbacks where the keys will be
+  // the image URL and the value will be a function
+  this._imageFetchersCallbacks = {};
+
+  function imageFetcherWorkerOnMessage(event) {
+    self._imageFetchersCallbacks[event.data.imageURL](event);
+    delete self._imageFetchersCallbacks[event.data.imageURL];
+  }
+
+  // Check what method can use for loading the images
+  // Check if the browser supports `OffscreenCanvas` and `createImageBitmap`
+  // else using only fetch
+  if (typeof window.createImageBitmap === 'function') {
+    this._imageFetcherNoResizeWorker = new Worker(
+      '/workers/downloadTilesWorker.js'
+    );
+
+    this._imageFetcherNoResizeWorker.onmessage = imageFetcherWorkerOnMessage;
+
+    this._useWorkers = true;
+  }
 }
 
 /**
@@ -54,88 +69,81 @@ function HtmlImageLoader(stage) {
  * @param {function(?Error, Asset)} done The callback.
  * @return {function()} A function to cancel loading.
  */
-HtmlImageLoader.prototype.loadImage = function(url, rect, done) {
-  var self = this;
-
-  var img = new Image();
-
-  console.log(url)
-
-  // Allow cross-domain image loading.
-  // This is required to be able to create WebGL textures from images fetched
-  // from a different domain. Note that setting the crossorigin attribute to
-  // 'anonymous' will trigger a CORS preflight for cross-domain requests, but no
-  // credentials (cookies or HTTP auth) will be sent; to do so, the attribute
-  // would have to be set to 'use-credentials' instead. Unfortunately, this is
-  // not a safe choice, as it causes requests to fail when the response contains
-  // an Access-Control-Allow-Origin header with a wildcard. See the section
-  // "Credentialed requests and wildcards" on:
-  // https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
-  img.crossOrigin = 'anonymous';
-
-  var x = rect && rect.x || 0;
-  var y = rect && rect.y || 0;
-  var width = rect && rect.width || 1;
-  var height = rect && rect.height || 1;
+HtmlImageLoader.prototype.loadImage = function (url, rect, done) {
+  var x = (rect && rect.x) || 0;
+  var y = (rect && rect.y) || 0;
+  var width = (rect && rect.width) || 1;
+  var height = (rect && rect.height) || 1;
 
   done = once(done);
 
-  img.onload = function() {
-    self._handleLoad(img, x, y, width, height, done);
-  };
+  var cancelFunction;
+  var shouldCancel = false;
 
-  img.onerror = function() {
-    self._handleError(url, done);
-  };
+  if (!this._useWorkers || url.includes('cubemap')) {
+    var img = new Image();
 
-  img.src = url;
+    // Allow cross-domain image loading.
+    // This is required to be able to create WebGL textures from images fetched
+    // from a different domain. Note that setting the crossorigin attribute to
+    // 'anonymous' will trigger a CORS preflight for cross-domain requests, but no
+    // credentials (cookies or HTTP auth) will be sent; to do so, the attribute
+    // would have to be set to 'use-credentials' instead. Unfortunately, this is
+    // not a safe choice, as it causes requests to fail when the response contains
+    // an Access-Control-Allow-Origin header with a wildcard. See the section
+    // "Credentialed requests and wildcards" on:
+    // https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
+    img.crossOrigin = 'anonymous';
 
-  function cancel() {
-    img.onload = img.onerror = null;
-    img.src = '';
-    done.apply(null, arguments);
-  }
+    img.onload = function () {
+      if (x === 0 && y === 0 && width === 1 && height === 1) {
+        done(null, new StaticAsset(img));
+      } else {
+        x *= img.naturalWidth;
+        y *= img.naturalHeight;
+        width *= img.naturalWidth;
+        height *= img.naturalHeight;
 
-  return cancel;
-};
+        var canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        var context = canvas.getContext('2d');
 
-HtmlImageLoader.prototype._handleLoad = function(img, x, y, width, height, done) {
-  if (x === 0 && y === 0 && width === 1 && height === 1) {
-    // Fast path for when cropping is not needed.
-    done(null, new StaticAsset(img));
-    return;
-  }
+        context.drawImage(img, x, y, width, height, 0, 0, width, height);
 
-  x *= img.naturalWidth;
-  y *= img.naturalHeight;
-  width *= img.naturalWidth;
-  height *= img.naturalHeight;
+        done(null, new StaticAsset(canvas));
+      }
+    };
 
-  if (useCreateImageBitmap) {
-    // Prefer to crop using createImageBitmap, which can potentially offload
-    // work to another thread and avoid blocking the user interface.
-    // Assume that the promise is never rejected.
-    global.createImageBitmap(img, x, y, width, height, createImageBitmapOpts)
-      .then(function(bitmap) {
-        done(null, new StaticAsset(bitmap));
-      });
+    img.onerror = function () {
+      // TODO: is there any way to distinguish a network error from other
+      // kinds of errors? For now we always return NetworkError since this
+      // prevents images to be retried continuously while we are offline.
+      done(new NetworkError('Network error: ' + url));
+    };
+
+    img.src = url;
+
+    cancelFunction = function () {
+      img.onload = img.onerror = null;
+      img.src = '';
+      done.apply(null, arguments);
+    };
   } else {
-    // Fall back to cropping using a canvas, which can potentially block the
-    // user interface, but is the best we can do.
-    var canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    var context = canvas.getContext('2d');
-    context.drawImage(img, x, y, width, height, 0, 0, width, height);
-    done(null, new StaticAsset(canvas));
-  }
-};
+    this._imageFetchersCallbacks[url] = function (event) {
+      if (shouldCancel) return;
+      done(null, new StaticAsset(event.data.imageBitmap));
+    };
 
-HtmlImageLoader.prototype._handleError = function(url, done) {
-  // TODO: is there any way to distinguish a network error from other
-  // kinds of errors? For now we always return NetworkError since this
-  // prevents images to be retried continuously while we are offline.
-  done(new NetworkError('Network error: ' + url));
+    cancelFunction = function () {
+      shouldCancel = true;
+      done.apply(null, arguments);
+    };
+
+    this._imageFetcherNoResizeWorker.postMessage({ imageURL: url });
+  }
+
+  return cancelFunction;
 };
 
 module.exports = HtmlImageLoader;
