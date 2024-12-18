@@ -19,8 +19,8 @@ var defaults = require('../util/defaults');
 var clearOwnProperties = require('../util/clearOwnProperties');
 
 var defaultOpts = {
-  active: 'move',
-  inactive: 'default',
+  active: 'grabbing',
+  inactive: 'grab',
   disabled: 'default'
 };
 

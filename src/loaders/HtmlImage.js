@@ -43,8 +43,10 @@ function HtmlImageLoader(stage) {
   this._imageFetchersCallbacks = {};
 
   function imageFetcherWorkerOnMessage(event) {
-    self._imageFetchersCallbacks[event.data.imageURL](event);
-    delete self._imageFetchersCallbacks[event.data.imageURL];
+    if (self._imageFetchersCallbacks[event.data.imageURL]) {
+      self._imageFetchersCallbacks[event.data.imageURL](event);
+      delete self._imageFetchersCallbacks[event.data.imageURL];
+    }
   }
 
   // Check what method can use for loading the images
