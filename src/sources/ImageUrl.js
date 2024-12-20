@@ -35,7 +35,7 @@ var templateProperties = {
 var defaultCubeMapFaceOrder = 'bdflru';
 
 // Default maximum number of concurrent requests.
-var defaultConcurrency = 4;
+var defaultConcurrency = 100;
 
 // Default milliseconds to wait before retrying failed requests.
 var defaultRetryDelay = 10000;
