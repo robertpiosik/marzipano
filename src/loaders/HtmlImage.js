@@ -42,6 +42,8 @@ function HtmlImageLoader(stage) {
   // the image URL and the value will be a function
   this._imageFetchersCallbacks = {};
 
+  this._imageCache = {};
+
   function imageFetcherWorkerOnMessage(event) {
     if (self._imageFetchersCallbacks[event.data.imageURL]) {
       self._imageFetchersCallbacks[event.data.imageURL](event);
@@ -79,6 +81,28 @@ HtmlImageLoader.prototype.loadImage = function (url, rect, done) {
 
   done = once(done);
 
+  if (this._imageCache[url]) {
+    const cachedImage = this._imageCache[url];
+    if (x === 0 && y === 0 && width === 1 && height === 1) {
+      done(null, new StaticAsset(cachedImage));
+    } else {
+      x *= cachedImage.naturalWidth;
+      y *= cachedImage.naturalHeight;
+      width *= cachedImage.naturalWidth;
+      height *= cachedImage.naturalHeight;
+
+      var canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      var context = canvas.getContext('2d');
+
+      context.drawImage(cachedImage, x, y, width, height, 0, 0, width, height);
+
+      done(null, new StaticAsset(canvas));
+    }
+    return function () {};
+  }
+
   var cancelFunction;
   var shouldCancel = false;
 
@@ -98,6 +122,8 @@ HtmlImageLoader.prototype.loadImage = function (url, rect, done) {
     img.crossOrigin = 'anonymous';
 
     img.onload = function () {
+      this._imageCache[url] = img;
+
       if (x === 0 && y === 0 && width === 1 && height === 1) {
         done(null, new StaticAsset(img));
       } else {
@@ -115,7 +141,7 @@ HtmlImageLoader.prototype.loadImage = function (url, rect, done) {
 
         done(null, new StaticAsset(canvas));
       }
-    };
+    }.bind(this);
 
     img.onerror = function () {
       // TODO: is there any way to distinguish a network error from other
@@ -134,8 +160,14 @@ HtmlImageLoader.prototype.loadImage = function (url, rect, done) {
   } else {
     this._imageFetchersCallbacks[url] = function (event) {
       if (shouldCancel) return;
-      done(null, new StaticAsset(event.data.imageBitmap));
-    };
+      // Add the image to the cache
+      createImageBitmap(event.data.imageBitmap).then(
+        function (imageBitmap) {
+          this._imageCache[url] = imageBitmap;
+          done(null, new StaticAsset(imageBitmap));
+        }.bind(this)
+      );
+    }.bind(this);
 
     cancelFunction = function () {
       shouldCancel = true;
