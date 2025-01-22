@@ -95,6 +95,7 @@ function Viewer(domElement, opts) {
   this._controlContainer = document.createElement('div');
   setAbsolute(this._controlContainer);
   setFullSize(this._controlContainer);
+  setOverflowHidden(this._controlContainer);
   domElement.appendChild(this._controlContainer);
 
   // Respond to window size changes.
