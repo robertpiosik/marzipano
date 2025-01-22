@@ -54,7 +54,7 @@ function HtmlImageLoader(stage) {
   // else using only fetch
   if (typeof window.createImageBitmap === 'function') {
     this._imageFetcherNoResizeWorker = new Worker(
-      '/workers/downloadTilesWorker.js'
+      '/workers/tile-downloader.js'
     );
 
     this._imageFetcherNoResizeWorker.onmessage = imageFetcherWorkerOnMessage;
