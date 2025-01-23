@@ -161,8 +161,8 @@ DragControlMethod.prototype._updateDynamicsMove = function(e) {
 
   this._dynamics.x.reset();
   this._dynamics.y.reset();
-  this._dynamics.x.offset = -x;
-  this._dynamics.y.offset = -y;
+  this._dynamics.x.offset = -x * 1.5;
+  this._dynamics.y.offset = -y * 1.5;
 
   this._lastEvent = e;
 };
