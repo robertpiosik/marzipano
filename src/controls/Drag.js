@@ -24,7 +24,7 @@ var clearOwnProperties = require('../util/clearOwnProperties');
 
 var defaultOptions = {
   friction: 6,
-  maxFrictionTime: 0.3,
+  maxFrictionTime: 0.4,
   hammerEvent: 'pan'
 };
 
